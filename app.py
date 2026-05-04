@@ -165,7 +165,7 @@ BASE_HTML = """
 
   <div class="box">
     <h1>Gmail Cleaner</h1>
-    <p>Emails permanently delete nahi honge, sirf Gmail Trash me move honge.</p>
+    <p>Emails are moved to Trash, not permanently deleted (recoverable within 30 days).</p>
     {% if email %}
       <p>
         Logged in: <b>{{ email }}</b>
