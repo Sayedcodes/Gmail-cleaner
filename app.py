@@ -1,10 +1,14 @@
+
 import json
 import os
+import threading
+import time
+import uuid
 from functools import wraps
 
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-from flask import Flask, redirect, render_template_string, request, session, url_for
+from flask import Flask, jsonify, redirect, render_template_string, request, session, url_for
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
@@ -14,6 +18,8 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 
 
 SCOPES = ["https://mail.google.com/"]
+JOBS = {}
+JOBS_LOCK = threading.Lock()
 
 CATEGORIES = {
     "promotions": {
@@ -152,6 +158,64 @@ BASE_HTML = """
       grid-template-columns: 1fr 1fr;
       gap: 12px;
     }
+    .progress-shell {
+      background: #070b13;
+      border: 1px solid #343b4e;
+      border-radius: 999px;
+      overflow: hidden;
+      height: 32px;
+      position: relative;
+      margin: 16px 0;
+    }
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #16a34a, #39ff14);
+      transition: width .4s ease;
+    }
+    .progress-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      color: #f7fee7;
+      text-shadow: 0 1px 4px #000;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .stat {
+      background: #202637;
+      border: 1px solid #343b4e;
+      border-radius: 13px;
+      padding: 12px;
+    }
+    .stat span {
+      color: #b9c0d0;
+      display: block;
+      font-size: 13px;
+    }
+    .stat b {
+      display: block;
+      font-size: 23px;
+      margin-top: 6px;
+    }
+    .terminal {
+      background: #020617;
+      color: #39ff14;
+      border: 1px solid #1f2937;
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 14px;
+      font-family: Consolas, Monaco, monospace;
+      min-height: 54px;
+      line-height: 1.45;
+    }
     @media(max-width:700px) {
       .row { grid-template-columns: 1fr; }
       body { padding: 12px; }
@@ -242,22 +306,31 @@ def credentials_to_dict(credentials):
     }
 
 
+def credentials_from_info(info):
+    credentials = Credentials.from_authorized_user_info(info, SCOPES)
+
+    if credentials.expired and credentials.refresh_token:
+        credentials.refresh(Request())
+
+    return credentials
+
+
 def credentials_from_session():
     info = session.get("credentials")
     if not info:
         raise RuntimeError("Login required")
 
-    credentials = Credentials.from_authorized_user_info(info, SCOPES)
-
-    if credentials.expired and credentials.refresh_token:
-        credentials.refresh(Request())
-        session["credentials"] = credentials_to_dict(credentials)
-
+    credentials = credentials_from_info(info)
+    session["credentials"] = credentials_to_dict(credentials)
     return credentials
 
 
 def gmail_service():
     return build("gmail", "v1", credentials=credentials_from_session(), cache_discovery=False)
+
+
+def gmail_service_from_info(info):
+    return build("gmail", "v1", credentials=credentials_from_info(info), cache_discovery=False)
 
 
 def login_required(fn):
@@ -323,19 +396,54 @@ def fetch_thread_ids(service, query):
             return ids
 
 
-def trash_threads(service, ids):
-    success = 0
-    failed = 0
+def update_job(job_id, **updates):
+    with JOBS_LOCK:
+        if job_id in JOBS:
+            JOBS[job_id].update(updates)
 
-    for index in range(0, len(ids), 50):
+
+def get_job(job_id):
+    with JOBS_LOCK:
+        return dict(JOBS.get(job_id, {}))
+
+
+def seconds_to_text(seconds):
+    seconds = int(max(0, seconds or 0))
+    minutes, sec = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+
+    if hours:
+        return f"{hours}h {minutes}m {sec}s"
+    if minutes:
+        return f"{minutes}m {sec}s"
+    return f"{sec}s"
+
+
+def trash_threads_with_progress(service, ids, job_id):
+    total = len(ids)
+    update_job(job_id, total=total, status="running", message="Deleting started...")
+
+    if total == 0:
+        update_job(
+            job_id,
+            status="done",
+            percent=100,
+            message="No matching emails found.",
+            finished_at=time.time(),
+        )
+        return
+
+    for index in range(0, total, 50):
         chunk = ids[index:index + 50]
+        chunk_success = 0
+        chunk_failed = 0
 
         def callback(request_id, response, exception):
-            nonlocal success, failed
+            nonlocal chunk_success, chunk_failed
             if exception is None:
-                success += 1
+                chunk_success += 1
             else:
-                failed += 1
+                chunk_failed += 1
 
         batch = BatchHttpRequest(
             callback=callback,
@@ -350,7 +458,62 @@ def trash_threads(service, ids):
 
         batch.execute()
 
-    return success, failed
+        job = get_job(job_id)
+        done = int(job.get("done", 0)) + chunk_success
+        failed = int(job.get("failed", 0)) + chunk_failed
+        processed = done + failed
+        elapsed = max(0.1, time.time() - float(job.get("started_at", time.time())))
+        speed = round(processed / elapsed, 2)
+        remaining = max(0, total - processed)
+        eta_seconds = int(remaining / speed) if speed > 0 else 0
+        percent = round((processed / total) * 100, 1)
+
+        update_job(
+            job_id,
+            done=done,
+            failed=failed,
+            processed=processed,
+            percent=percent,
+            speed=speed,
+            eta=eta_seconds,
+            eta_text=seconds_to_text(eta_seconds),
+            message=(
+                f"[{'█' * int(percent / 5)}{'░' * (20 - int(percent / 5))}] "
+                f"{percent}% | {processed}/{total} | Speed: {speed}/sec | "
+                f"ETA: {seconds_to_text(eta_seconds)} | Failed: {failed}"
+            ),
+        )
+
+        time.sleep(0.15)
+
+    job = get_job(job_id)
+    done = int(job.get("done", 0))
+    failed = int(job.get("failed", 0))
+    update_job(
+        job_id,
+        status="done",
+        percent=100,
+        eta=0,
+        eta_text="0s",
+        message=f"Done! {done} threads Gmail Trash me move ho gaye. Failed: {failed}",
+        finished_at=time.time(),
+    )
+
+
+def run_trash_job(job_id, query, credentials_info):
+    try:
+        update_job(job_id, status="scanning", message="Searching matching Gmail threads...")
+        service = gmail_service_from_info(credentials_info)
+        ids = fetch_thread_ids(service, query)
+        update_job(job_id, total=len(ids), message=f"Found {len(ids)} threads. Starting delete...")
+        trash_threads_with_progress(service, ids, job_id)
+    except Exception as exc:
+        update_job(
+            job_id,
+            status="error",
+            message=str(exc),
+            finished_at=time.time(),
+        )
 
 
 @app.route("/")
@@ -557,38 +720,102 @@ def trash():
     if not query or query != session.get("last_query"):
         return redirect(url_for("dashboard"))
 
-    try:
-        service = gmail_service()
-        ids = fetch_thread_ids(service, query)
-        success, failed = trash_threads(service, ids)
+    job_id = uuid.uuid4().hex
+    credentials_info = dict(session.get("credentials", {}))
 
-        return render_page(
-            """
-            <div class="box">
-              <h2>Done</h2>
-              <p><b>{{ success }}</b> threads Trash me move ho gaye.</p>
-              <p>Failed: <b>{{ failed }}</b></p>
-              <a class="btn ok" href="{{ url_for('dashboard') }}">Clean more</a>
-            </div>
-            """,
-            success=success,
-            failed=failed,
-            msg="Trash operation complete",
-        )
+    with JOBS_LOCK:
+        JOBS[job_id] = {
+            "status": "starting",
+            "query": query,
+            "total": 0,
+            "done": 0,
+            "failed": 0,
+            "processed": 0,
+            "percent": 0,
+            "speed": 0,
+            "eta": 0,
+            "eta_text": "--",
+            "message": "Starting...",
+            "started_at": time.time(),
+        }
 
-    except Exception as exc:
-        return render_page(
-            """
-            <div class="box">
-              <h2>Trash failed</h2>
-              <code>{{ error }}</code>
-              <br>
-              <a class="btn btn2" href="{{ url_for('dashboard') }}">Back</a>
-            </div>
-            """,
-            error=str(exc),
-            msg="Error",
-        )
+    worker = threading.Thread(
+        target=run_trash_job,
+        args=(job_id, query, credentials_info),
+        daemon=True,
+    )
+    worker.start()
+
+    return render_page(
+        """
+        <div class="box">
+          <h2>Deleting in progress</h2>
+          <p>Is page ko open rehne do. Progress live update hoti rahegi.</p>
+
+          <div class="progress-shell">
+            <div id="bar" class="progress-fill"></div>
+            <div id="percent" class="progress-label">0%</div>
+          </div>
+
+          <div class="stats">
+            <div class="stat"><span>Done</span><b id="done">0</b></div>
+            <div class="stat"><span>Total</span><b id="total">0</b></div>
+            <div class="stat"><span>Speed</span><b id="speed">0/sec</b></div>
+            <div class="stat"><span>ETA</span><b id="eta">--</b></div>
+            <div class="stat"><span>Failed</span><b id="failed">0</b></div>
+          </div>
+
+          <div id="terminal" class="terminal">Starting...</div>
+
+          <div id="finish" style="display:none;margin-top:16px;">
+            <a class="btn ok" href="{{ url_for('dashboard') }}">Clean more</a>
+          </div>
+        </div>
+
+        <script>
+          const progressUrl = "{{ url_for('progress', job_id=job_id) }}";
+
+          async function poll() {
+            try {
+              const response = await fetch(progressUrl, {cache: "no-store"});
+              const data = await response.json();
+              const percent = Number(data.percent || 0);
+
+              document.getElementById("bar").style.width = percent + "%";
+              document.getElementById("percent").textContent = percent.toFixed(1) + "%";
+              document.getElementById("done").textContent = data.done || 0;
+              document.getElementById("total").textContent = data.total || 0;
+              document.getElementById("failed").textContent = data.failed || 0;
+              document.getElementById("speed").textContent = (data.speed || 0) + "/sec";
+              document.getElementById("eta").textContent = data.eta_text || "--";
+              document.getElementById("terminal").textContent = data.message || "Working...";
+
+              if (data.status === "done" || data.status === "error") {
+                document.getElementById("finish").style.display = "block";
+                return;
+              }
+            } catch (error) {
+              document.getElementById("terminal").textContent = "Progress read error: " + error;
+            }
+
+            setTimeout(poll, 1000);
+          }
+
+          poll();
+        </script>
+        """,
+        job_id=job_id,
+        msg="Live progress started",
+    )
+
+
+@app.route("/progress/<job_id>")
+@login_required
+def progress(job_id):
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"status": "error", "message": "Job not found", "percent": 0})
+    return jsonify(job)
 
 
 @app.route("/health")
