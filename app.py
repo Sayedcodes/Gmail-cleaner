@@ -1,510 +1,255 @@
-"""
-Gmail Email Cleaner - Advanced Version
-=======================================
-Custom categories + date range support!
-
-Setup:
-  1. pip install google-auth google-auth-oauthlib google-api-python-client
-  2. Place credentials.json in same folder
-  3. Run: python gmail_cleaner.py
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📂 CATEGORIES (jo delete kar sakte ho):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  1  →  Promotions
-  2  →  Newsletters
-  3  →  Job Emails
-  4  →  Social Notifications
-  5  →  Orders & Receipts
-  6  →  Spam
-  7  →  Custom keyword (apna search daalo)
-  A  →  Saari categories ek saath
-
-  Multiple select: 1,3 ya 2,4,6 (comma se alag karo)
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📅 DATE OPTIONS (3 tarike):
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  Option 1 → Last N Days (kitne din pehle tak)
-    Example:  7   = last 1 hafta
-              14  = last 2 hafte
-              30  = last 1 mahina
-              90  = last 3 mahine
-              365 = last 1 saal
-
-  Option 2 → Custom Date Range (from - to)
-    Format:   YYYY/MM/DD
-    Example:  From: 2026/01/01
-              To:   2026/04/30
-    Matlab:   January se April tak ke emails delete honge
-
-  Option 3 → Koi filter nahi
-    Matlab:   Gmail ki puri history mein se delete hoga
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
-
-import os
-import hashlib
 import json
-import time
-from datetime import datetime
-from pathlib import Path
+import os
+from functools import wraps
+
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
+from flask import Flask, redirect, render_template_string, request, session, url_for
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import BatchHttpRequest
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 SCOPES = ["https://mail.google.com/"]
 
-# ── Predefined Categories ──────────────────────────────────────────────────────
 CATEGORIES = {
-    "1": {
-        "label": "📢 Promotions",
-        "query": "category:promotions OR label:promotions",
-    },
-    "2": {
-        "label": "📰 Newsletters",
-        "query": (
-            "unsubscribe OR from:newsletter OR from:noreply OR from:no-reply "
-            "OR subject:newsletter OR subject:digest OR subject:weekly OR subject:\"your briefing\""
-        ),
-    },
-    "3": {
-        "label": "💼 Job Emails",
-        "query": (
-            "from:indeed.com OR from:linkedin.com OR from:shine.com "
-            "OR from:internshala.com OR from:naukri.com OR from:jobsora.com "
-            "OR from:jobs2web.com OR subject:\"job alert\" OR subject:\"new jobs\" "
-            "OR subject:\"apply to jobs\" OR subject:\"vacancy\" "
-            "OR subject:\"hiring\" OR subject:\"openings\""
-        ),
-    },
-    "4": {
-        "label": "🔔 Social Notifications",
-        "query": (
-            "category:social OR from:notifications OR "
-            "from:noreply@linkedin.com OR from:twitter OR from:facebook"
-        ),
-    },
-    "5": {
-        "label": "🛒 Orders & Receipts",
-        "query": (
-            "subject:order OR subject:receipt OR subject:invoice "
-            "OR subject:payment OR subject:\"your purchase\""
-        ),
-    },
-    "6": {
-        "label": "📦 Spam",
-        "query": "in:spam",
-    },
+    "promotions": ("Promotions", "category:promotions OR label:promotions"),
+    "newsletters": ("Newsletters", "unsubscribe OR from:newsletter OR from:noreply OR from:no-reply OR subject:newsletter OR subject:digest"),
+    "jobs": ("Job Emails", "from:indeed.com OR from:linkedin.com OR from:shine.com OR from:internshala.com OR from:naukri.com OR subject:\"job alert\" OR subject:hiring OR subject:openings"),
+    "social": ("Social Notifications", "category:social OR from:notifications OR from:noreply@linkedin.com OR from:twitter OR from:facebook"),
+    "orders": ("Orders & Receipts", "subject:order OR subject:receipt OR subject:invoice OR subject:payment OR subject:\"your purchase\""),
+    "spam": ("Spam", "in:spam"),
 }
 
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# ── Auth ───────────────────────────────────────────────────────────────────────
-def authenticate():
-    creds = None
-    if os.path.exists("token.json"):
-        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES,
-                redirect_uri="urn:ietf:wg:oauth:2.0:oob"
-            )
-            auth_url, _ = flow.authorization_url(prompt="consent")
-            print("\n" + "=" * 55)
-            print("  Yeh URL browser mein kholo:")
-            print("=" * 55)
-            print(auth_url)
-            print("=" * 55)
-            code = input("  Code paste karo: ").strip()
-            flow.fetch_token(code=code)
-            creds = flow.credentials
-        with open("token.json", "w") as f:
-            f.write(creds.to_json())
-    return creds
+STYLE = """
+<style>
+body{margin:0;font-family:Arial,Segoe UI,sans-serif;background:#0f1117;color:#f5f5f5;padding:24px} .box{max-width:850px;margin:0 auto 18px;background:#171a23;border:1px solid #2b3242;border-radius:18px;padding:22px;box-shadow:0 18px 45px #0006} h1{margin:0;font-size:34px} h2{margin-top:0} p{color:#b9c0d0;line-height:1.5}.btn{display:inline-block;border:0;border-radius:12px;padding:12px 16px;background:#8b5cf6;color:white;text-decoration:none;font-weight:700;cursor:pointer}.btn2{background:#252b3b}.danger{background:#ef4444}.ok{background:#22c55e;color:#07130b}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}.opt{background:#202637;border:1px solid #343b4e;border-radius:13px;padding:13px;display:flex;gap:10px;align-items:center}input,textarea{width:100%;box-sizing:border-box;margin-top:7px;background:#0c101a;color:white;border:1px solid #343b4e;border-radius:10px;padding:11px}input[type=checkbox],input[type=radio]{width:auto;margin:0}code{white-space:pre-wrap;display:block;background:#0b0f18;border:1px solid #343b4e;border-radius:10px;padding:12px;overflow-wrap:anywhere}.msg{max-width:850px;margin:0 auto 18px;border-radius:14px;padding:14px;background:#121827;border-left:4px solid #8b5cf6}.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}@media(max-width:700px){.row{grid-template-columns:1fr}body{padding:12px}}
+</style>
+"""
 
 
-# ── Date Input ─────────────────────────────────────────────────────────────────
-def get_date_range():
-    # DATE PATTERNS REMINDER:
-    # Option 1: newer_than:Nd   (N = number of days)
-    #   e.g.  newer_than:7d   = last 7 days
-    #   e.g.  newer_than:30d  = last 30 days
-    #
-    # Option 2: after:YYYY/MM/DD before:YYYY/MM/DD
-    #   e.g.  after:2026/01/01 before:2026/04/30
-    #
-    # Option 3: no filter = saari history
-
-    print("\n📅 Date range select karo:")
-    print("  1. Last N days  (e.g. 7, 14, 30, 90, 365 din)")
-    print("  2. Custom range (from date → to date)")
-    print("  3. Koi filter nahi (puri Gmail history)")
-
-    choice = input("\nChoice (1/2/3): ").strip()
-
-    if choice == "1":
-        days = input("  Kitne din? (e.g. 7): ").strip()
-        return f"newer_than:{days}d"
-
-    elif choice == "2":
-        print("  Format: YYYY/MM/DD  (e.g. 2026/04/01)")
-        from_date = input("  From date: ").strip()
-        to_date   = input("  To date:   ").strip()
-        try:
-            datetime.strptime(from_date, "%Y/%m/%d")
-            datetime.strptime(to_date,   "%Y/%m/%d")
-            return f"after:{from_date} before:{to_date}"
-        except ValueError:
-            print("  ⚠️ Galat format! Koi filter apply nahi hoga.")
-            return ""
-    else:
-        return ""  # No filter
+def render(body, **ctx):
+    html = """
+    <!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>
+    <title>Gmail Cleaner</title>""" + STYLE + """</head><body>
+    {% if msg %}<div class='msg'>{{ msg }}</div>{% endif %}
+    <div class='box'><h1>Gmail Cleaner</h1><p>Emails permanently delete nahi honge, sirf Gmail Trash me move honge.</p>
+    {% if email %}<p>Logged in: <b>{{ email }}</b> &nbsp; <a class='btn btn2' href='{{ url_for("logout") }}'>Logout</a></p>{% endif %}</div>
+    """ + body + """</body></html>"""
+    return render_template_string(html, email=session.get("email"), **ctx)
 
 
-# ── Category Selection ─────────────────────────────────────────────────────────
-def select_categories():
-    print("\n📂 Categories select karo:")
-    print("-" * 45)
-    for key, cat in CATEGORIES.items():
-        print(f"  {key}. {cat['label']}")
-    print("  7. 🔍 Custom keyword (apna search daalo)")
-    print("  A. ✅ Saari categories (1-6)")
-    print("-" * 45)
-    print("  💡 Tip: Multiple ke liye comma use karo")
-    print("         e.g.  1,3  ya  2,4,6")
-    print("-" * 45)
-
-    choice = input("Choice: ").strip().upper()
-
-    selected = []
-
-    if choice == "A":
-        selected = list(CATEGORIES.values())
-    else:
-        keys = [k.strip() for k in choice.split(",")]
-        for k in keys:
-            if k in CATEGORIES:
-                selected.append(CATEGORIES[k])
-            elif k == "7":
-                keyword = input("  Custom keyword daalo: ").strip()
-                if keyword:
-                    selected.append({
-                        "label": f"🔍 Custom: '{keyword}'",
-                        "query": keyword
-                    })
-
-    return selected
+def base_url():
+    return (os.environ.get("PUBLIC_BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL") or request.host_url).rstrip("/")
 
 
-# ── Core Functions ─────────────────────────────────────────────────────────────
-def fetch_thread_ids(service, query):
-    ids = []
-    page_token = None
+def callback_url():
+    return base_url() + "/callback"
+
+
+def client_config():
+    raw = os.environ.get("GOOGLE_CREDENTIALS_JSON", "").strip()
+    if raw:
+        return json.loads(raw)
+    if os.path.exists("credentials.json"):
+        with open("credentials.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    raise RuntimeError("GOOGLE_CREDENTIALS_JSON missing hai. Render Environment me credentials.json ka full content paste karo.")
+
+
+def allowed_emails():
+    raw = os.environ.get("ALLOWED_EMAILS", "").strip().lower()
+    return [x.strip() for x in raw.split(",") if x.strip()] if raw else []
+
+
+def cred_to_dict(c):
+    return {"token": c.token, "refresh_token": c.refresh_token, "token_uri": c.token_uri, "client_id": c.client_id, "client_secret": c.client_secret, "scopes": c.scopes}
+
+
+def creds():
+    info = session.get("credentials")
+    if not info:
+        raise RuntimeError("Login required")
+    c = Credentials.from_authorized_user_info(info, SCOPES)
+    if c.expired and c.refresh_token:
+        c.refresh(Request())
+        session["credentials"] = cred_to_dict(c)
+    return c
+
+
+def service():
+    return build("gmail", "v1", credentials=creds(), cache_discovery=False)
+
+
+def login_required(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if "credentials" not in session:
+            return redirect(url_for("home"))
+        return fn(*args, **kwargs)
+    return wrapper
+
+
+def make_query(form):
+    parts = []
+    labels = []
+    for key in form.getlist("category"):
+        if key in CATEGORIES:
+            labels.append(CATEGORIES[key][0])
+            parts.append("(" + CATEGORIES[key][1] + ")")
+    custom = form.get("custom", "").strip()
+    if custom:
+        labels.append("Custom")
+        parts.append("(" + custom + ")")
+    if not parts:
+        raise ValueError("Kam se kam ek category ya custom query select karo.")
+    q = " OR ".join(parts)
+    mode = form.get("date_mode", "all")
+    if mode == "last":
+        days = form.get("days", "").strip()
+        if not days.isdigit() or int(days) < 1:
+            raise ValueError("Last days me valid number daalo.")
+        q = "(" + q + ") newer_than:" + str(int(days)) + "d"
+    elif mode == "range":
+        after = form.get("after", "").strip().replace("-", "/")
+        before = form.get("before", "").strip().replace("-", "/")
+        if not after or not before:
+            raise ValueError("From aur To date dono daalo.")
+        q = "(" + q + ") after:" + after + " before:" + before
+    return q, labels
+
+
+def fetch_thread_ids(svc, query):
+    ids, token = [], None
     while True:
-        kwargs = {"userId": "me", "q": query, "maxResults": 500}
-        if page_token:
-            kwargs["pageToken"] = page_token
-        result = service.users().threads().list(**kwargs).execute()
-        threads = result.get("threads", [])
-        ids.extend(t["id"] for t in threads)
-        page_token = result.get("nextPageToken")
-        if not page_token:
-            break
-    return ids
+        args = {"userId": "me", "q": query, "maxResults": 500}
+        if token:
+            args["pageToken"] = token
+        res = svc.users().threads().list(**args).execute()
+        ids.extend([t["id"] for t in res.get("threads", [])])
+        token = res.get("nextPageToken")
+        if not token:
+            return ids
 
 
-def format_eta(seconds):
-    seconds = int(max(0, seconds))
-    mins, sec = divmod(seconds, 60)
-    hrs, mins = divmod(mins, 60)
-
-    if hrs:
-        return f"{hrs}h {mins}m {sec}s"
-    if mins:
-        return f"{mins}m {sec}s"
-    return f"{sec}s"
-
-
-def progress_bar(done, total, width=26):
-    if total <= 0:
-        return "[" + "-" * width + "] 0%"
-
-    percent = done / total
-    filled = int(width * percent)
-    bar = "█" * filled + "░" * (width - filled)
-    return f"[{bar}] {percent * 100:5.1f}%"
-
-
-def make_run_id(thread_ids):
-    raw = "|".join(thread_ids[:20] + thread_ids[-20:] + [str(len(thread_ids))])
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()
-
-
-def save_resume_state(pause_file, run_id, remaining_ids, original_total, done_count):
-    pause_file.write_text(
-        json.dumps(
-            {
-                "run_id": run_id,
-                "original_total": original_total,
-                "done_count": done_count,
-                "remaining_ids": remaining_ids,
-                "updated_at": datetime.now().isoformat(timespec="seconds"),
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
-def trash_threads(service, thread_ids):
-    """
-    Termux-stable Gmail trash:
-    - Correct Gmail BatchHttpRequest endpoint
-    - No parallel threads
-    - Visual progress bar
-    - ETA
-    - Pause/resume
-    """
-
-    if not thread_ids:
-        print("  ✅ Kuch trash karne ke liye nahi mila.")
-        return 0
-
-    original_total = len(thread_ids)
-    run_id = make_run_id(thread_ids)
-    pause_file = Path("gmail_cleaner_resume.json")
-
-    # Termux-safe batch size
-    batch_size = 20
-
-    ids_to_process = list(thread_ids)
-    done_before = 0
-
-    if pause_file.exists():
-        try:
-            data = json.loads(pause_file.read_text(encoding="utf-8"))
-
-            if data.get("run_id") == run_id and data.get("remaining_ids"):
-                saved_done = int(data.get("done_count", 0))
-                saved_total = int(data.get("original_total", original_total))
-
-                choice = input(
-                    f"  ⏸️ Same run resume file mila: {saved_done}/{saved_total} done. Resume? (yes/no): "
-                ).strip().lower()
-
-                if choice in ("yes", "y", "ha", "haan"):
-                    ids_to_process = data["remaining_ids"]
-                    done_before = saved_done
-                    original_total = saved_total
-                    print(f"  ▶️ Resuming from {done_before}/{original_total} ...")
-                else:
-                    pause_file.unlink(missing_ok=True)
+def trash_threads(svc, ids):
+    success = 0
+    failed = 0
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i+50]
+        def cb(request_id, response, exception):
+            nonlocal success, failed
+            if exception is None:
+                success += 1
             else:
-                print("  ℹ️ Old/different resume file ignore kar di.")
-                pause_file.unlink(missing_ok=True)
+                failed += 1
+        batch = BatchHttpRequest(callback=cb, batch_uri="https://gmail.googleapis.com/batch/gmail/v1")
+        for tid in chunk:
+            batch.add(svc.users().threads().trash(userId="me", id=tid), request_id=tid)
+        batch.execute()
+    return success, failed
 
-        except Exception:
-            pause_file.unlink(missing_ok=True)
 
-    total_remaining = len(ids_to_process)
-    remaining_set = set(ids_to_process)
+@app.route("/")
+def home():
+    if "credentials" in session:
+        return redirect(url_for("dashboard"))
+    return render("""
+    <div class='box'><h2>Connect Gmail</h2><p>Google Cloud me Authorized redirect URI ye add karo:</p><code>{{ cb }}</code><br><a class='btn' href='{{ url_for("login") }}'>Login with Google</a></div>
+    """, cb=callback_url(), msg=None)
 
-    success_count = 0
-    failed_count = 0
-    start_time = time.time()
 
-    print()
-    print("  🚀 Stable Fast Mode ON — Gmail Batch API")
-    print(f"  📦 Original total: {original_total}")
-    print(f"  🧹 Remaining now: {total_remaining}")
-    print(f"  ⚡ Batch size: {batch_size}")
-    print("  🔒 Parallel OFF for Termux stability")
-    print("  ✅ Correct batch endpoint: https://gmail.googleapis.com/batch/gmail/v1")
-    print("  ⏸️ Pause karna ho to Ctrl + C dabao. Dobara run karoge to resume hoga.")
-    print()
+@app.route("/login")
+def login():
+    flow = Flow.from_client_config(client_config(), scopes=SCOPES, redirect_uri=callback_url())
+    auth_url, state = flow.authorization_url(access_type="offline", include_granted_scopes="true", prompt="consent")
+    session["state"] = state
+    return redirect(auth_url)
 
-    def print_progress():
-        done_total = done_before + success_count
-        elapsed = time.time() - start_time
-        speed = success_count / elapsed if elapsed > 0 else 0
-        remaining = max(0, original_total - done_total)
-        eta = remaining / speed if speed > 0 else 0
 
-        print(
-            f"  {progress_bar(done_total, original_total)} "
-            f"| {done_total}/{original_total} "
-            f"| Speed: {speed:.1f}/sec "
-            f"| ETA: {format_eta(eta)} "
-            f"| Failed: {failed_count}",
-            flush=True
-        )
-
+@app.route("/callback")
+def callback():
     try:
-        for i in range(0, total_remaining, batch_size):
-            chunk = ids_to_process[i:i + batch_size]
-
-            successful_ids = []
-            failed_ids = []
-
-            def callback(request_id, response, exception):
-                if exception is None:
-                    successful_ids.append(request_id)
-                else:
-                    failed_ids.append(request_id)
-                    print(f"  ⚠️ Failed {request_id}: {exception}")
-
-            # Important fix:
-            # Old default URL https://www.googleapis.com/batch gives 404.
-            batch = BatchHttpRequest(
-                callback=callback,
-                batch_uri="https://gmail.googleapis.com/batch/gmail/v1"
-            )
-
-            for tid in chunk:
-                batch.add(
-                    service.users().threads().trash(userId="me", id=tid),
-                    request_id=tid
-                )
-
-            batch.execute()
-
-            success_count += len(successful_ids)
-            failed_count += len(failed_ids)
-
-            for sid in successful_ids:
-                remaining_set.discard(sid)
-
-            save_resume_state(
-                pause_file,
-                run_id,
-                list(remaining_set),
-                original_total,
-                done_before + success_count,
-            )
-
-            print_progress()
-            time.sleep(0.5)
-
-        if remaining_set:
-            save_resume_state(
-                pause_file,
-                run_id,
-                list(remaining_set),
-                original_total,
-                done_before + success_count,
-            )
-            print()
-            print(f"  ⚠️ {len(remaining_set)} emails remaining hain. Dobara run karke retry/resume kar sakte ho.")
-        else:
-            pause_file.unlink(missing_ok=True)
-            print()
-            print(f"  ✅ Done! {success_count} emails Gmail Trash me move ho gaye.")
-
-        return success_count
-
-    except KeyboardInterrupt:
-        save_resume_state(
-            pause_file,
-            run_id,
-            list(remaining_set),
-            original_total,
-            done_before + success_count,
-        )
-        print()
-        print(f"  ⏸️ Paused safely at {done_before + success_count}/{original_total}.")
-        print("  ▶️ Resume ke liye same script dobara run karo aur yes likho.")
-        return success_count
-
+        flow = Flow.from_client_config(client_config(), scopes=SCOPES, state=session.get("state"), redirect_uri=callback_url())
+        auth_response = request.url
+        if auth_response.startswith("http://") and "onrender.com" in auth_response:
+            auth_response = auth_response.replace("http://", "https://", 1)
+        flow.fetch_token(authorization_response=auth_response)
+        c = flow.credentials
+        svc = build("gmail", "v1", credentials=c, cache_discovery=False)
+        email = svc.users().getProfile(userId="me").execute().get("emailAddress", "").lower()
+        allow = allowed_emails()
+        if allow and email not in allow:
+            session.clear()
+            return render("<div class='box'><h2>Access denied</h2><p>This email is not allowed.</p><a class='btn btn2' href='/'>Back</a></div>", msg=email + " ALLOWED_EMAILS me nahi hai")
+        session["credentials"] = cred_to_dict(c)
+        session["email"] = email
+        return redirect(url_for("dashboard"))
     except Exception as e:
-        save_resume_state(
-            pause_file,
-            run_id,
-            list(remaining_set),
-            original_total,
-            done_before + success_count,
-        )
-        print()
-        print(f"  ⚠️ Error aaya: {e}")
-        print(f"  💾 Progress saved at {done_before + success_count}/{original_total}.")
-        print("  ▶️ Dobara run karke resume kar sakte ho.")
-        return success_count
+        return render("<div class='box'><h2>OAuth Error</h2><code>{{ error }}</code><br><a class='btn btn2' href='/'>Try again</a></div>", error=str(e), msg="Login failed")
 
 
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("home"))
 
-# ── Main ───────────────────────────────────────────────────────────────────────
-def main():
-    print("\n" + "=" * 55)
-    print("  📬  Gmail Email Cleaner - Advanced")
-    print("=" * 55)
 
-    print("\n🔐 Authenticating ...")
-    creds = authenticate()
-    service = build("gmail", "v1", credentials=creds)
-    print("  ✅ Authenticated!\n")
+@app.route("/dashboard")
+@login_required
+def dashboard():
+    return render("""
+    <form class='box' method='post' action='{{ url_for("preview") }}'>
+      <h2>1) Select categories</h2><div class='grid'>{% for key, value in cats.items() %}<label class='opt'><input type='checkbox' name='category' value='{{ key }}'> {{ value[0] }}</label>{% endfor %}</div>
+      <h2>2) Custom query optional</h2><textarea name='custom' rows='3' placeholder='Example: from:amazon OR subject:"offer"'></textarea>
+      <h2>3) Date filter</h2><div class='grid'><label class='opt'><input type='radio' name='date_mode' value='all' checked> No filter</label><label class='opt'><input type='radio' name='date_mode' value='last'> Last N days</label><label class='opt'><input type='radio' name='date_mode' value='range'> Date range</label></div>
+      <div class='row'><label>Last N days<input type='number' name='days' min='1' placeholder='30'></label><div></div></div>
+      <div class='row'><label>From<input type='date' name='after'></label><label>To<input type='date' name='before'></label></div><br>
+      <button class='btn' type='submit'>Preview</button>
+    </form>
+    """, cats=CATEGORIES, msg=None)
 
-    while True:
-        print("\n" + "=" * 55)
-        print("  1. Emails delete karo")
-        print("  2. Quit")
-        print("=" * 55)
 
-        action = input("Choice (1/2): ").strip()
+@app.route("/preview", methods=["POST"])
+@login_required
+def preview():
+    try:
+        q, labels = make_query(request.form)
+        ids = fetch_thread_ids(service(), q)
+        session["last_query"] = q
+        return render("""
+        <div class='box'><h2>Preview</h2><p>Matched Gmail threads: <b>{{ count }}</b></p><p>Selected: {{ labels|join(', ') }}</p><code>{{ q }}</code><br>
+        {% if count > 0 %}<form method='post' action='{{ url_for("trash") }}'><input type='hidden' name='query' value='{{ q }}'><button class='btn danger' type='submit'>Move {{ count }} threads to Trash</button> <a class='btn btn2' href='{{ url_for("dashboard") }}'>Cancel</a></form>{% else %}<a class='btn btn2' href='{{ url_for("dashboard") }}'>Back</a>{% endif %}</div>
+        """, count=len(ids), labels=labels, q=q, msg="Preview complete")
+    except Exception as e:
+        return render("<div class='box'><h2>Preview failed</h2><code>{{ error }}</code><br><a class='btn btn2' href='{{ url_for("dashboard") }}'>Back</a></div>", error=str(e), msg="Error")
 
-        if action == "2" or action.lower() in ("quit", "exit", "q"):
-            print("\nBye! 👋")
-            break
 
-        if action != "1":
-            print("⚠️  Sirf 1 ya 2 daalo!")
-            continue
+@app.route("/trash", methods=["POST"])
+@login_required
+def trash():
+    q = request.form.get("query", "")
+    if not q or q != session.get("last_query"):
+        return redirect(url_for("dashboard"))
+    try:
+        svc = service()
+        ids = fetch_thread_ids(svc, q)
+        success, failed = trash_threads(svc, ids)
+        return render("<div class='box'><h2>Done</h2><p><b>{{ success }}</b> threads Trash me move ho gaye.</p><p>Failed: <b>{{ failed }}</b></p><a class='btn ok' href='{{ url_for("dashboard") }}'>Clean more</a></div>", success=success, failed=failed, msg="Trash operation complete")
+    except Exception as e:
+        return render("<div class='box'><h2>Trash failed</h2><code>{{ error }}</code><br><a class='btn btn2' href='{{ url_for("dashboard") }}'>Back</a></div>", error=str(e), msg="Error")
 
-        # Step 1: Categories
-        categories = select_categories()
-        if not categories:
-            print("⚠️  Koi category select nahi hui!")
-            continue
 
-        # Step 2: Date range
-        date_filter = get_date_range()
-
-        # Step 3: Confirm
-        print("\n" + "-" * 45)
-        print("📋 Summary — Yeh delete hoga:")
-        for cat in categories:
-            print(f"  • {cat['label']}")
-        print(f"  📅 Date: {date_filter if date_filter else 'Koi filter nahi (saari history)'}")
-        print("-" * 45)
-
-        confirm = input("Confirm? (yes/no): ").strip().lower()
-        if confirm not in ("yes", "y", "ha", "haan"):
-            print("❌ Cancel!")
-            continue
-
-        # Step 4: Delete
-        total = 0
-        for cat in categories:
-            query = f"({cat['query']}) {date_filter}" if date_filter else cat["query"]
-            print(f"\n🔍 Searching: {cat['label']} ...")
-            ids = fetch_thread_ids(service, query)
-
-            if not ids:
-                print("  ✅ Kuch nahi mila!")
-                continue
-
-            print(f"  Found {len(ids)} emails. Trashing ...")
-            count = trash_threads(service, ids)
-            total += count
-            print(f"  ✅ {count} emails trashed!")
-
-        print(f"\n🎉 Total {total} emails Trash mein gaye!\n")
+@app.route("/health")
+def health():
+    return {"status": "ok"}
 
 
 if __name__ == "__main__":
-    main()
-    
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
