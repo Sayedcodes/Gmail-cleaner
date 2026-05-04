@@ -229,7 +229,7 @@ BASE_HTML = """
 
   <div class="box">
     <h1>Gmail Cleaner</h1>
-    <p>Emails are moved to Trash, not permanently deleted (recoverable within 30 days).</p>
+    <p>Emails permanently delete nahi honge, sirf Gmail Trash me move honge.</p>
     {% if email %}
       <p>
         Logged in: <b>{{ email }}</b>
@@ -420,8 +420,21 @@ def seconds_to_text(seconds):
 
 
 def trash_threads_with_progress(service, ids, job_id):
+    """Move Gmail threads to Trash with live progress + safer retry mode.
+
+    Batch size is 10 for maximum safety.
+    Failed requests are retried up to 5 times before being counted as failed.
+    """
     total = len(ids)
-    update_job(job_id, total=total, status="running", message="Deleting started...")
+    batch_size = 10
+    max_retries = 5
+
+    update_job(
+        job_id,
+        total=total,
+        status="running",
+        message=f"Deleting started... Batch size: {batch_size}, retries: {max_retries}",
+    )
 
     if total == 0:
         update_job(
@@ -433,17 +446,45 @@ def trash_threads_with_progress(service, ids, job_id):
         )
         return
 
-    for index in range(0, total, 50):
-        chunk = ids[index:index + 50]
-        chunk_success = 0
-        chunk_failed = 0
+    def update_progress_message(extra_message=""):
+        job = get_job(job_id)
+        done = int(job.get("done", 0))
+        failed = int(job.get("failed", 0))
+        processed = done + failed
+        elapsed = max(0.1, time.time() - float(job.get("started_at", time.time())))
+        speed = round(processed / elapsed, 2) if processed else 0
+        remaining = max(0, total - processed)
+        eta_seconds = int(remaining / speed) if speed > 0 else 0
+        percent = round((processed / total) * 100, 1) if total else 100
+        filled = min(20, int(percent / 5))
+
+        message = (
+            f"[{'█' * filled}{'░' * (20 - filled)}] "
+            f"{percent}% | {processed}/{total} | Speed: {speed}/sec | "
+            f"ETA: {seconds_to_text(eta_seconds)} | Failed: {failed}"
+        )
+        if extra_message:
+            message += f" | {extra_message}"
+
+        update_job(
+            job_id,
+            processed=processed,
+            percent=percent,
+            speed=speed,
+            eta=eta_seconds,
+            eta_text=seconds_to_text(eta_seconds),
+            message=message,
+        )
+
+    def trash_chunk(chunk, attempt):
+        successful_ids = []
+        failed_ids = []
 
         def callback(request_id, response, exception):
-            nonlocal chunk_success, chunk_failed
             if exception is None:
-                chunk_success += 1
+                successful_ids.append(request_id)
             else:
-                chunk_failed += 1
+                failed_ids.append(request_id)
 
         batch = BatchHttpRequest(
             callback=callback,
@@ -456,35 +497,45 @@ def trash_threads_with_progress(service, ids, job_id):
                 request_id=thread_id,
             )
 
-        batch.execute()
+        try:
+            batch.execute()
+        except Exception:
+            # If the whole batch fails, retry the full chunk.
+            failed_ids = list(chunk)
+            successful_ids = []
 
-        job = get_job(job_id)
-        done = int(job.get("done", 0)) + chunk_success
-        failed = int(job.get("failed", 0)) + chunk_failed
-        processed = done + failed
-        elapsed = max(0.1, time.time() - float(job.get("started_at", time.time())))
-        speed = round(processed / elapsed, 2)
-        remaining = max(0, total - processed)
-        eta_seconds = int(remaining / speed) if speed > 0 else 0
-        percent = round((processed / total) * 100, 1)
+        return successful_ids, failed_ids
 
-        update_job(
-            job_id,
-            done=done,
-            failed=failed,
-            processed=processed,
-            percent=percent,
-            speed=speed,
-            eta=eta_seconds,
-            eta_text=seconds_to_text(eta_seconds),
-            message=(
-                f"[{'█' * int(percent / 5)}{'░' * (20 - int(percent / 5))}] "
-                f"{percent}% | {processed}/{total} | Speed: {speed}/sec | "
-                f"ETA: {seconds_to_text(eta_seconds)} | Failed: {failed}"
-            ),
-        )
+    for index in range(0, total, batch_size):
+        original_chunk = ids[index:index + batch_size]
+        pending = list(original_chunk)
 
-        time.sleep(0.15)
+        for attempt in range(1, max_retries + 1):
+            if not pending:
+                break
+
+            update_progress_message(
+                f"Batch {index // batch_size + 1}, attempt {attempt}/{max_retries}"
+            )
+
+            successful_ids, failed_ids = trash_chunk(pending, attempt)
+
+            if successful_ids:
+                job = get_job(job_id)
+                update_job(job_id, done=int(job.get("done", 0)) + len(successful_ids))
+
+            pending = failed_ids
+
+            if pending and attempt < max_retries:
+                # Small pause helps Gmail API settle before retry.
+                time.sleep(0.8)
+
+        if pending:
+            job = get_job(job_id)
+            update_job(job_id, failed=int(job.get("failed", 0)) + len(pending))
+
+        update_progress_message()
+        time.sleep(0.2)
 
     job = get_job(job_id)
     done = int(job.get("done", 0))
@@ -498,7 +549,6 @@ def trash_threads_with_progress(service, ids, job_id):
         message=f"Done! {done} threads Gmail Trash me move ho gaye. Failed: {failed}",
         finished_at=time.time(),
     )
-
 
 def run_trash_job(job_id, query, credentials_info):
     try:
