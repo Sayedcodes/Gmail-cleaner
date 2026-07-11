@@ -41,7 +41,8 @@ CATEGORIES = {
         "label": "Job Emails",
         "query": (
             "from:indeed.com OR from:linkedin.com OR from:shine.com "
-            "OR from:internshala.com OR from:naukri.com "
+            "OR from:internshala.com OR from:naukri.com OR from:foundit.in "
+            "OR from:monsterindia.com "
             "OR subject:\"job alert\" OR subject:hiring OR subject:openings"
         ),
     },
@@ -65,6 +66,21 @@ CATEGORIES = {
     },
 }
 
+ACTIONS = {
+    "trash": {
+        "label": "Move to Trash",
+        "verb": "Trash",
+        "done_text": "moved to Trash",
+        "css": "danger",
+    },
+    "spam": {
+        "label": "Mark as Spam",
+        "verb": "Spam",
+        "done_text": "marked as Spam",
+        "css": "warn",
+    },
+}
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -81,105 +97,213 @@ BASE_HTML = """
   <link rel="manifest" href="{{ url_for('manifest') }}">
   <link rel="icon" href="{{ url_for('icon_192') }}">
   <link rel="apple-touch-icon" href="{{ url_for('icon_192') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
+    :root {
+      --bg-0: #05070d;
+      --bg-1: #0a0e18;
+      --glass: rgba(255,255,255,0.04);
+      --glass-hi: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.09);
+      --border-hi: rgba(255,255,255,0.18);
+      --text: #eef1fb;
+      --text-dim: #93a0c2;
+      --accent: #8b5cf6;
+      --accent-2: #22d3ee;
+      --danger: #ef4444;
+      --warn: #f59e0b;
+      --ok: #22c55e;
+      --radius: 20px;
+    }
+    * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: Arial, Segoe UI, sans-serif;
-      background: #0f1117;
-      color: #f5f5f5;
-      padding: 24px;
+      font-family: "Space Grotesk", Arial, sans-serif;
+      background:
+        radial-gradient(1200px 700px at 12% -10%, rgba(139,92,246,0.20), transparent 55%),
+        radial-gradient(1000px 600px at 110% 10%, rgba(34,211,238,0.14), transparent 50%),
+        linear-gradient(180deg, var(--bg-0), var(--bg-1) 60%);
+      background-attachment: fixed;
+      color: var(--text);
+      padding: 28px 18px 60px;
+      min-height: 100vh;
+      line-height: 1.5;
     }
     .box {
-      max-width: 900px;
-      margin: 0 auto 18px;
-      background: #171a23;
-      border: 1px solid #2b3242;
-      border-radius: 18px;
-      padding: 22px;
-      box-shadow: 0 18px 45px #0006;
+      max-width: 920px;
+      margin: 0 auto 20px;
+      background: var(--glass);
+      backdrop-filter: blur(22px) saturate(140%);
+      -webkit-backdrop-filter: blur(22px) saturate(140%);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 26px;
+      box-shadow: 0 24px 60px -20px #000a, inset 0 1px 0 rgba(255,255,255,0.05);
+      animation: rise .5s cubic-bezier(.2,.8,.2,1);
     }
-    h1 { margin: 0; font-size: 34px; }
-    h2 { margin-top: 0; }
-    p { color: #b9c0d0; line-height: 1.55; }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    h1 {
+      margin: 0;
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -.02em;
+      background: linear-gradient(90deg, #fff, #b9c6ff 60%, var(--accent-2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    h2 {
+      margin: 0 0 14px;
+      font-size: 15px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--text-dim);
+    }
+    p { color: var(--text-dim); line-height: 1.6; margin: 8px 0; }
+    a { color: inherit; }
     .btn {
-      display: inline-block;
-      border: 0;
-      border-radius: 12px;
-      padding: 12px 16px;
-      background: #8b5cf6;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid transparent;
+      border-radius: 14px;
+      padding: 13px 20px;
+      background: linear-gradient(135deg, var(--accent), #6d28d9);
       color: white;
       text-decoration: none;
-      font-weight: 700;
+      font-weight: 600;
+      font-size: 15px;
       cursor: pointer;
-      margin: 4px 6px 4px 0;
+      margin: 4px 8px 4px 0;
+      transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
+      box-shadow: 0 10px 24px -8px rgba(139,92,246,.55);
     }
-    .btn2 { background: #252b3b; }
-    .danger { background: #ef4444; }
-    .ok { background: #22c55e; color: #07130b; }
+    .btn:hover { transform: translateY(-2px); filter: brightness(1.08); }
+    .btn:active { transform: translateY(0); }
+    .btn2 {
+      background: var(--glass-hi);
+      border: 1px solid var(--border-hi);
+      box-shadow: none;
+      color: var(--text);
+    }
+    .danger { background: linear-gradient(135deg, var(--danger), #b91c1c); box-shadow: 0 10px 24px -8px rgba(239,68,68,.55); }
+    .warn { background: linear-gradient(135deg, var(--warn), #b45309); box-shadow: 0 10px 24px -8px rgba(245,158,11,.55); }
+    .ok { background: linear-gradient(135deg, var(--ok), #15803d); color: #06170c; box-shadow: 0 10px 24px -8px rgba(34,197,94,.5); }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 10px;
     }
     .opt {
-      background: #202637;
-      border: 1px solid #343b4e;
-      border-radius: 13px;
-      padding: 13px;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
       display: flex;
       gap: 10px;
       align-items: center;
+      cursor: pointer;
+      transition: border-color .15s ease, background .15s ease, transform .15s ease;
+    }
+    .opt:hover { border-color: var(--border-hi); transform: translateY(-1px); }
+    .opt:has(input:checked) {
+      border-color: var(--accent);
+      background: rgba(139,92,246,0.12);
+      box-shadow: 0 0 0 1px rgba(139,92,246,.35) inset;
     }
     input, textarea {
       width: 100%;
       box-sizing: border-box;
       margin-top: 7px;
-      background: #0c101a;
+      background: rgba(0,0,0,0.3);
       color: white;
-      border: 1px solid #343b4e;
-      border-radius: 10px;
-      padding: 11px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      font-family: inherit;
+      transition: border-color .15s ease;
+    }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
     }
     input[type=checkbox], input[type=radio] {
-      width: auto;
+      width: 18px;
+      height: 18px;
       margin: 0;
+      accent-color: var(--accent);
     }
     code {
       white-space: pre-wrap;
       display: block;
-      background: #0b0f18;
-      border: 1px solid #343b4e;
-      border-radius: 10px;
-      padding: 12px;
+      background: rgba(0,0,0,0.35);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
       overflow-wrap: anywhere;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
+      color: var(--accent-2);
     }
     .msg {
-      max-width: 900px;
+      max-width: 920px;
       margin: 0 auto 18px;
       border-radius: 14px;
-      padding: 14px;
-      background: #121827;
-      border-left: 4px solid #8b5cf6;
+      padding: 14px 18px;
+      background: var(--glass-hi);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
     }
     .row {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
     }
+    .action-toggle {
+      display: flex;
+      gap: 10px;
+      background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 6px;
+    }
+    .action-toggle label {
+      flex: 1;
+      text-align: center;
+      padding: 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-dim);
+      transition: background .15s ease, color .15s ease;
+    }
+    .action-toggle input { display: none; }
+    .action-toggle label:has(input:checked) {
+      background: linear-gradient(135deg, var(--accent), #6d28d9);
+      color: white;
+    }
     .progress-shell {
-      background: #070b13;
-      border: 1px solid #343b4e;
+      background: rgba(0,0,0,0.4);
+      border: 1px solid var(--border);
       border-radius: 999px;
       overflow: hidden;
-      height: 32px;
+      height: 34px;
       position: relative;
-      margin: 16px 0;
+      margin: 18px 0;
     }
     .progress-fill {
       height: 100%;
       width: 0%;
-      background: linear-gradient(90deg, #16a34a, #39ff14);
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
       transition: width .4s ease;
+      box-shadow: 0 0 20px rgba(139,92,246,.6);
     }
     .progress-label {
       position: absolute;
@@ -187,63 +311,76 @@ BASE_HTML = """
       display: flex;
       align-items: center;
       justify-content: center;
-      font-weight: 800;
-      color: #f7fee7;
+      font-weight: 700;
+      color: #fff;
       text-shadow: 0 1px 4px #000;
+      letter-spacing: .02em;
     }
     .stats {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
       gap: 10px;
-      margin-top: 12px;
+      margin-top: 14px;
     }
     .stat {
-      background: #202637;
-      border: 1px solid #343b4e;
-      border-radius: 13px;
-      padding: 12px;
+      background: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 13px;
     }
     .stat span {
-      color: #b9c0d0;
+      color: var(--text-dim);
       display: block;
-      font-size: 13px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
     }
     .stat b {
       display: block;
-      font-size: 23px;
+      font-size: 22px;
       margin-top: 6px;
+      font-family: "JetBrains Mono", monospace;
     }
     .terminal {
-      background: #020617;
-      color: #39ff14;
-      border: 1px solid #1f2937;
-      border-radius: 12px;
+      background: rgba(0,0,0,0.5);
+      color: #39ff88;
+      border: 1px solid var(--border);
+      border-radius: 14px;
       padding: 14px;
       margin-top: 14px;
-      font-family: Consolas, Monaco, monospace;
+      font-family: "JetBrains Mono", Consolas, monospace;
+      font-size: 13px;
       min-height: 54px;
-      line-height: 1.45;
+      line-height: 1.5;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: rgba(139,92,246,0.18);
+      border: 1px solid rgba(139,92,246,0.4);
+      color: #c9b6ff;
+      margin-left: 6px;
     }
     .footer {
-      max-width: 900px;
+      max-width: 920px;
       margin: 8px auto 0;
       padding: 14px 6px;
-      color: #8f98ad;
+      color: var(--text-dim);
       text-align: center;
-      font-size: 14px;
+      font-size: 13px;
       letter-spacing: .2px;
     }
-    .footer b {
-      color: #f5f5f5;
-    }
-    .footer .dot {
-      color: #39ff14;
-      font-weight: 900;
-      margin: 0 6px;
-    }
+    .footer b { color: var(--text); }
+    .footer .dot { color: var(--accent-2); font-weight: 900; margin: 0 6px; }
     @media(max-width:700px) {
-      .row { grid-template-columns: 1fr; }
-      body { padding: 12px; }
+      .row, .action-toggle { grid-template-columns: 1fr; }
+      .action-toggle { flex-direction: column; }
+      body { padding: 16px 10px 48px; }
+      h1 { font-size: 26px; }
+      .box { padding: 18px; border-radius: 16px; }
     }
   </style>
 </head>
@@ -253,8 +390,8 @@ BASE_HTML = """
   {% endif %}
 
   <div class="box">
-    <h1>Gmail Cleaner</h1>
-    <p>Emails are moved to Trash, not permanently deleted (recoverable within 30 days).</p>
+    <h1>Gmail Cleaner<span class="badge">2026</span></h1>
+    <p>Trash mode is recoverable (30 days). Spam mode auto-filters future mail from that sender too.</p>
     {% if email %}
       <p>
         Logged in: <b>{{ email }}</b>
@@ -416,7 +553,11 @@ def make_query(form):
             raise ValueError("From aur To date dono daalo.")
         query = "(" + query + ") after:" + after_date + " before:" + before_date
 
-    return query, labels
+    action = form.get("action", "trash")
+    if action not in ACTIONS:
+        raise ValueError("Invalid action selected.")
+
+    return query, labels, action
 
 
 def fetch_thread_ids(service, query):
@@ -459,8 +600,8 @@ def seconds_to_text(seconds):
     return f"{sec}s"
 
 
-def trash_threads_with_progress(service, ids, job_id):
-    """Move Gmail threads to Trash with live progress + safer retry mode.
+def process_threads_with_progress(service, ids, job_id, action):
+    """Move Gmail threads to Trash OR mark them as Spam, with live progress + safer retry mode.
 
     Batch size is 10 for maximum safety.
     Failed requests are retried up to 5 times before being counted as failed.
@@ -468,12 +609,13 @@ def trash_threads_with_progress(service, ids, job_id):
     total = len(ids)
     batch_size = 10
     max_retries = 5
+    action_meta = ACTIONS[action]
 
     update_job(
         job_id,
         total=total,
         status="running",
-        message=f"Deleting started... Batch size: {batch_size}, retries: {max_retries}",
+        message=f"{action_meta['verb']} started... Batch size: {batch_size}, retries: {max_retries}",
     )
 
     if total == 0:
@@ -532,10 +674,16 @@ def trash_threads_with_progress(service, ids, job_id):
         )
 
         for thread_id in chunk:
-            batch.add(
-                service.users().threads().trash(userId="me", id=thread_id),
-                request_id=thread_id,
-            )
+            if action == "spam":
+                request_obj = service.users().threads().modify(
+                    userId="me",
+                    id=thread_id,
+                    body={"addLabelIds": ["SPAM"], "removeLabelIds": ["INBOX", "UNREAD", "IMPORTANT"]},
+                )
+            else:
+                request_obj = service.users().threads().trash(userId="me", id=thread_id)
+
+            batch.add(request_obj, request_id=thread_id)
 
         try:
             batch.execute()
@@ -586,17 +734,17 @@ def trash_threads_with_progress(service, ids, job_id):
         percent=100,
         eta=0,
         eta_text="0s",
-        message=f"Done! {done} threads Gmail Trash me move ho gaye. Failed: {failed}",
+        message=f"Done! {done} threads {action_meta['done_text']}. Failed: {failed}",
         finished_at=time.time(),
     )
 
-def run_trash_job(job_id, query, credentials_info):
+def run_process_job(job_id, query, action, credentials_info):
     try:
         update_job(job_id, status="scanning", message="Searching matching Gmail threads...")
         service = gmail_service_from_info(credentials_info)
         ids = fetch_thread_ids(service, query)
-        update_job(job_id, total=len(ids), message=f"Found {len(ids)} threads. Starting delete...")
-        trash_threads_with_progress(service, ids, job_id)
+        update_job(job_id, total=len(ids), message=f"Found {len(ids)} threads. Starting {ACTIONS[action]['verb'].lower()}...")
+        process_threads_with_progress(service, ids, job_id, action)
     except Exception as exc:
         update_job(
             job_id,
@@ -719,10 +867,20 @@ def dashboard():
             {% endfor %}
           </div>
 
-          <h2>2) Custom query optional</h2>
-          <textarea name="custom" rows="3" placeholder='Example: from:amazon OR subject:"offer"'></textarea>
+          <h2 style="margin-top:22px;">2) Custom query <span style="text-transform:none;letter-spacing:0;">(optional — sender, domain, keyword)</span></h2>
+          <textarea name="custom" rows="3" placeholder='Example: from:naukri.com OR from:shine.com OR subject:"offer"'></textarea>
 
-          <h2>3) Date filter</h2>
+          <h2 style="margin-top:22px;">3) Action</h2>
+          <div class="action-toggle">
+            {% for key, action in actions.items() %}
+              <label>
+                <input type="radio" name="action" value="{{ key }}" {% if key == 'trash' %}checked{% endif %}>
+                {{ action.label }}
+              </label>
+            {% endfor %}
+          </div>
+
+          <h2 style="margin-top:22px;">4) Date filter</h2>
           <div class="grid">
             <label class="opt"><input type="radio" name="date_mode" value="all" checked> No filter</label>
             <label class="opt"><input type="radio" name="date_mode" value="last"> Last N days</label>
@@ -746,10 +904,11 @@ def dashboard():
           </div>
 
           <br>
-          <button class="btn" type="submit">Preview</button>
+          <button class="btn" type="submit">Preview →</button>
         </form>
         """,
         categories=CATEGORIES,
+        actions=ACTIONS,
     )
 
 
@@ -757,23 +916,26 @@ def dashboard():
 @login_required
 def preview():
     try:
-        query, labels = make_query(request.form)
+        query, labels, action = make_query(request.form)
         ids = fetch_thread_ids(gmail_service(), query)
         session["last_query"] = query
+        session["last_action"] = action
+        action_meta = ACTIONS[action]
 
         return render_page(
             """
             <div class="box">
               <h2>Preview</h2>
               <p>Matched Gmail threads: <b>{{ count }}</b></p>
-              <p>Selected: {{ labels | join(', ') }}</p>
+              <p>Selected: {{ labels | join(', ') }} <span class="badge">{{ action_meta.label }}</span></p>
               <code>{{ query }}</code>
               <br>
 
               {% if count > 0 %}
-                <form method="post" action="{{ url_for('trash') }}">
+                <form method="post" action="{{ url_for('process') }}">
                   <input type="hidden" name="query" value="{{ query }}">
-                  <button class="btn danger" type="submit">Move {{ count }} threads to Trash</button>
+                  <input type="hidden" name="action" value="{{ action }}">
+                  <button class="btn {{ action_meta.css }}" type="submit">{{ action_meta.label }} — {{ count }} threads</button>
                   <a class="btn btn2" href="{{ url_for('dashboard') }}">Cancel</a>
                 </form>
               {% else %}
@@ -784,6 +946,8 @@ def preview():
             count=len(ids),
             labels=labels,
             query=query,
+            action=action,
+            action_meta=action_meta,
             msg="Preview complete",
         )
 
@@ -802,12 +966,16 @@ def preview():
         )
 
 
-@app.route("/trash", methods=["POST"])
+@app.route("/process", methods=["POST"])
 @login_required
-def trash():
+def process():
     query = request.form.get("query", "")
+    action = request.form.get("action", "trash")
 
-    if not query or query != session.get("last_query"):
+    if action not in ACTIONS:
+        return redirect(url_for("dashboard"))
+
+    if not query or query != session.get("last_query") or action != session.get("last_action"):
         return redirect(url_for("dashboard"))
 
     job_id = uuid.uuid4().hex
@@ -817,6 +985,7 @@ def trash():
         JOBS[job_id] = {
             "status": "starting",
             "query": query,
+            "action": action,
             "total": 0,
             "done": 0,
             "failed": 0,
@@ -830,16 +999,18 @@ def trash():
         }
 
     worker = threading.Thread(
-        target=run_trash_job,
-        args=(job_id, query, credentials_info),
+        target=run_process_job,
+        args=(job_id, query, action, credentials_info),
         daemon=True,
     )
     worker.start()
 
+    action_meta = ACTIONS[action]
+
     return render_page(
         """
         <div class="box">
-          <h2>Deleting in progress</h2>
+          <h2>{{ action_meta.verb }} in progress</h2>
           <p>Is page ko open rehne do. Progress live update hoti rahegi.</p>
 
           <div class="progress-shell">
@@ -895,6 +1066,7 @@ def trash():
         </script>
         """,
         job_id=job_id,
+        action_meta=action_meta,
         msg="Live progress started",
     )
 
@@ -915,7 +1087,7 @@ def manifest():
         {
             "name": "Gmail Cleaner",
             "short_name": "Gmail Cleaner",
-            "description": "Move selected Gmail threads to Trash with live progress.",
+            "description": "Trash or Spam-mark selected Gmail threads with live progress.",
             "start_url": "/",
             "scope": "/",
             "display": "standalone",
