@@ -395,6 +395,8 @@ BASE_HTML = """
     {% if email %}
       <p>
         Logged in: <b>{{ email }}</b>
+        <a class="btn btn2" href="{{ url_for('dashboard') }}">Clean</a>
+        <a class="btn btn2" href="{{ url_for('rules') }}">Auto Rules</a>
         <a class="btn btn2" href="{{ url_for('logout') }}">Logout</a>
       </p>
     {% endif %}
@@ -558,6 +560,36 @@ def make_query(form):
         raise ValueError("Invalid action selected.")
 
     return query, labels, action
+
+
+def list_gmail_filters(service):
+    result = service.users().settings().filters().list(userId="me").execute()
+    return result.get("filter", [])
+
+
+def create_gmail_filter(service, query, action):
+    """Create a real, permanent Gmail filter using the native Filters API.
+
+    action='spam' -> auto mark-as-spam for all future mail matching query
+    action='trash' -> auto delete for all future mail matching query
+    """
+    if action == "spam":
+        add_labels = ["SPAM"]
+    else:
+        add_labels = ["TRASH"]
+
+    body = {
+        "criteria": {"query": query},
+        "action": {
+            "addLabelIds": add_labels,
+            "removeLabelIds": ["INBOX", "UNREAD", "IMPORTANT"],
+        },
+    }
+    return service.users().settings().filters().create(userId="me", body=body).execute()
+
+
+def delete_gmail_filter(service, filter_id):
+    service.users().settings().filters().delete(userId="me", id=filter_id).execute()
 
 
 def fetch_thread_ids(service, query):
@@ -910,6 +942,128 @@ def dashboard():
         categories=CATEGORIES,
         actions=ACTIONS,
     )
+
+
+@app.route("/rules")
+@login_required
+def rules():
+    try:
+        existing = list_gmail_filters(gmail_service())
+    except Exception as exc:
+        return render_page(
+            """
+            <div class="box">
+              <h2>Could not load rules</h2>
+              <code>{{ error }}</code>
+              <br><br>
+              <a class="btn btn2" href="{{ url_for('dashboard') }}">Back</a>
+            </div>
+            """,
+            error=str(exc),
+            msg="Error",
+        )
+
+    return render_page(
+        """
+        <div class="box">
+          <h2>Create a permanent rule</h2>
+          <p>Ye asli Gmail Filter banata hai — future ke sab matching mails automatically
+             {{ ' Trash' }} / Spam ho jayenge, bina kabhi app khole. Same jo browser se "Create filter" karta hai.</p>
+
+          <form method="post" action="{{ url_for('rules_create') }}">
+            <h2 style="margin-top:18px;">1) Categories</h2>
+            <div class="grid">
+              {% for key, category in categories.items() %}
+                <label class="opt">
+                  <input type="checkbox" name="category" value="{{ key }}">
+                  {{ category.label }}
+                </label>
+              {% endfor %}
+            </div>
+
+            <h2 style="margin-top:22px;">2) Keyword / domain <span style="text-transform:none;letter-spacing:0;">(e.g. naukri.com, shine.com)</span></h2>
+            <textarea name="custom" rows="2" placeholder='naukri.com, shine.com, foundit.in, monsterindia.com'></textarea>
+
+            <h2 style="margin-top:22px;">3) Action for future mails</h2>
+            <div class="action-toggle">
+              {% for key, action in actions.items() %}
+                <label>
+                  <input type="radio" name="action" value="{{ key }}" {% if key == 'spam' %}checked{% endif %}>
+                  {{ action.label }}
+                </label>
+              {% endfor %}
+            </div>
+
+            <br>
+            <button class="btn ok" type="submit">Create permanent rule</button>
+          </form>
+        </div>
+
+        <div class="box">
+          <h2>Active rules ({{ existing | length }})</h2>
+          {% if existing %}
+            {% for f in existing %}
+              <div class="opt" style="justify-content:space-between; cursor:default;">
+                <div>
+                  <code style="display:inline; padding:4px 8px;">{{ f.criteria.query or f.criteria.from or '—' }}</code>
+                  <span class="badge">
+                    {% if 'SPAM' in f.action.addLabelIds %}Spam
+                    {% elif 'TRASH' in f.action.addLabelIds %}Trash
+                    {% else %}{{ f.action.addLabelIds | join(', ') }}{% endif %}
+                  </span>
+                </div>
+                <form method="post" action="{{ url_for('rules_delete') }}" style="margin:0;">
+                  <input type="hidden" name="filter_id" value="{{ f.id }}">
+                  <button class="btn danger" type="submit" style="padding:8px 14px;font-size:13px;">Remove</button>
+                </form>
+              </div>
+            {% endfor %}
+          {% else %}
+            <p>Koi rule active nahi hai abhi.</p>
+          {% endif %}
+          <br>
+          <a class="btn btn2" href="{{ url_for('dashboard') }}">Back to Clean</a>
+        </div>
+        """,
+        categories=CATEGORIES,
+        actions=ACTIONS,
+        existing=existing,
+        msg="Auto Rules",
+    )
+
+
+@app.route("/rules/create", methods=["POST"])
+@login_required
+def rules_create():
+    try:
+        query, labels, action = make_query(request.form)
+        create_gmail_filter(gmail_service(), query, action)
+        return redirect(url_for("rules"))
+    except Exception as exc:
+        return render_page(
+            """
+            <div class="box">
+              <h2>Could not create rule</h2>
+              <code>{{ error }}</code>
+              <br><br>
+              <a class="btn btn2" href="{{ url_for('rules') }}">Back</a>
+            </div>
+            """,
+            error=str(exc),
+            msg="Error",
+        )
+
+
+@app.route("/rules/delete", methods=["POST"])
+@login_required
+def rules_delete():
+    filter_id = request.form.get("filter_id", "")
+    if filter_id:
+        try:
+            delete_gmail_filter(gmail_service(), filter_id)
+        except Exception:
+            pass
+    return redirect(url_for("rules"))
 
 
 @app.route("/preview", methods=["POST"])
