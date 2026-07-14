@@ -382,9 +382,104 @@ BASE_HTML = """
       h1 { font-size: 26px; }
       .box { padding: 18px; border-radius: 16px; }
     }
+    /* ---- Splash screen ---- */
+    #splash {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      background:
+        radial-gradient(650px 500px at 14% 10%, rgba(139,92,246,0.35), transparent 60%),
+        radial-gradient(650px 500px at 92% 96%, rgba(34,211,238,0.32), transparent 60%),
+        linear-gradient(180deg, #0b0f1c, #05070d 70%);
+      animation: splashOut 2.2s ease forwards;
+    }
+    #splash svg { width: 132px; height: 132px; overflow: visible; }
+    #splash .s-env {
+      transform-origin: 256px 214px;
+      animation: envIn .7s cubic-bezier(.2,.9,.25,1.2) both;
+    }
+    #splash .s-sweep {
+      stroke-dasharray: 480;
+      stroke-dashoffset: 480;
+      animation: drawSweep 1s .35s cubic-bezier(.3,.7,.2,1) forwards;
+    }
+    #splash .s-spark {
+      transform-origin: 402px 125px;
+      opacity: 0;
+      animation: sparkPop .6s 1s ease forwards;
+    }
+    #splash .s-word {
+      margin-top: 22px;
+      font-family: "Space Grotesk", sans-serif;
+      font-weight: 700;
+      font-size: 22px;
+      letter-spacing: .02em;
+      opacity: 0;
+      background: linear-gradient(90deg, #fff, #b9c6ff 60%, var(--accent-2));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: wordIn .6s .55s ease forwards;
+    }
+    @keyframes envIn {
+      0% { opacity: 0; transform: scale(.72) translateY(14px); }
+      100% { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes drawSweep {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes sparkPop {
+      0% { opacity: 0; transform: scale(.3) rotate(-15deg); }
+      60% { opacity: 1; transform: scale(1.15) rotate(0deg); }
+      100% { opacity: 1; transform: scale(1) rotate(0deg); }
+    }
+    @keyframes wordIn {
+      to { opacity: 1; }
+    }
+    @keyframes splashOut {
+      0% { opacity: 1; }
+      72% { opacity: 1; }
+      100% { opacity: 0; visibility: hidden; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #splash, #splash * { animation-duration: .01ms !important; animation-delay: 0s !important; }
+    }
   </style>
 </head>
 <body>
+  {% if show_splash %}
+  <div id="splash" aria-hidden="true">
+    <svg viewBox="0 0 512 512">
+      <defs>
+        <linearGradient id="spSweep" x1="0%" y1="100%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="#7c3aed" stop-opacity="0"/>
+          <stop offset="30%" stop-color="#8b5cf6"/>
+          <stop offset="100%" stop-color="#22d3ee"/>
+        </linearGradient>
+        <linearGradient id="spFlap" x1="0%" y1="0%" x2="0%" y2="100%">
+          <stop offset="0%" stop-color="#ffffff"/>
+          <stop offset="100%" stop-color="#e4e9fb"/>
+        </linearGradient>
+      </defs>
+      <path class="s-sweep" d="M 96,300 C 150,392 260,420 356,388 C 392,375 416,350 430,318"
+            stroke="url(#spSweep)" stroke-width="14" stroke-linecap="round" fill="none"/>
+      <g class="s-env">
+        <rect x="126" y="120" width="260" height="188" rx="24" fill="#ffffff"/>
+        <path d="M 126,138 L 256,246 L 126,290 Z" fill="#c3cceb" opacity="0.7"/>
+        <path d="M 386,138 L 256,246 L 386,290 Z" fill="#eef1fc" opacity="0.9"/>
+        <path d="M 126,136 C 126,126 134,120 144,120 L 368,120 C 378,120 386,126 386,136 L 256,248 Z" fill="url(#spFlap)"/>
+        <path d="M 126,136 L 256,248 L 386,136" fill="none" stroke="url(#spSweep)" stroke-width="6" stroke-linecap="round"/>
+      </g>
+      <path class="s-spark" d="M 402 96 L 409 118 L 431 125 L 409 132 L 402 154 L 395 132 L 373 125 L 395 118 Z" fill="#ffffff"/>
+    </svg>
+    <div class="s-word">Gmail Cleaner</div>
+  </div>
+  {% endif %}
+
   {% if msg %}
     <div class="msg">{{ msg }}</div>
   {% endif %}
@@ -423,13 +518,14 @@ BASE_HTML = """
 """
 
 
-def render_page(body_template, msg=None, **context):
+def render_page(body_template, msg=None, show_splash=False, **context):
     body = render_template_string(body_template, **context)
     return render_template_string(
         BASE_HTML,
         body=body,
         email=session.get("email"),
         msg=msg,
+        show_splash=show_splash,
     )
 
 
@@ -941,6 +1037,7 @@ def dashboard():
         """,
         categories=CATEGORIES,
         actions=ACTIONS,
+        show_splash=True,
     )
 
 
