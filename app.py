@@ -93,7 +93,7 @@ BASE_HTML = """
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gmail Cleaner</title>
-  <meta name="theme-color" content="#0f1117">
+  <meta name="theme-color" content="#05070d">
   <link rel="manifest" href="{{ url_for('manifest') }}">
   <link rel="icon" href="{{ url_for('icon_192') }}">
   <link rel="apple-touch-icon" href="{{ url_for('icon_192') }}">
@@ -1343,8 +1343,8 @@ def manifest():
             "scope": "/",
             "display": "standalone",
             "orientation": "portrait",
-            "background_color": "#0f1117",
-            "theme_color": "#0f1117",
+            "background_color": "#05070d",
+            "theme_color": "#05070d",
             "icons": [
                 {
                     "src": "/icon-192.png",
