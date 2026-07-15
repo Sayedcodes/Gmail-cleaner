@@ -923,6 +923,7 @@ def home():
         </div>
         """,
         callback=callback_url(),
+        show_splash=True,
     )
 
 
