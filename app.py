@@ -478,6 +478,31 @@ BASE_HTML = """
     </svg>
     <div class="s-word">Gmail Cleaner</div>
   </div>
+  <script>
+    (function () {
+      var originalSplashHTML = document.getElementById("splash").outerHTML;
+      var wasHidden = false;
+
+      function replaySplash() {
+        var current = document.getElementById("splash");
+        if (current) current.remove();
+        document.body.insertAdjacentHTML("afterbegin", originalSplashHTML);
+      }
+
+      // Case 1: page restored from bfcache (Android/Chrome "resume" instead of fresh load)
+      window.addEventListener("pageshow", function (e) {
+        if (e.persisted) replaySplash();
+      });
+
+      // Case 2: app was backgrounded (home button / app switcher) and brought back to foreground
+      document.addEventListener("visibilitychange", function () {
+        if (document.visibilityState === "visible" && wasHidden) {
+          replaySplash();
+        }
+        wasHidden = document.visibilityState === "hidden";
+      });
+    })();
+  </script>
   {% endif %}
 
   {% if msg %}
