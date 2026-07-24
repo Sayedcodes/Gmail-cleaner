@@ -935,10 +935,14 @@ def login():
         redirect_uri=callback_url(),
     )
 
-    auth_url, state = flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-    )
+    auth_kwargs = {
+        "access_type": "offline",
+        "include_granted_scopes": "true",
+    }
+    if request.args.get("force") == "1":
+        auth_kwargs["prompt"] = "consent"
+
+    auth_url, state = flow.authorization_url(**auth_kwargs)
 
     session["state"] = state
     return redirect(auth_url)
@@ -1154,6 +1158,11 @@ def rules():
     )
 
 
+def is_permission_error(exc):
+    text = str(exc).lower()
+    return "insufficientpermissions" in text.replace(" ", "") or "insufficient authentication scopes" in text
+
+
 @app.route("/rules/create", methods=["POST"])
 @login_required
 def rules_create():
@@ -1162,6 +1171,19 @@ def rules_create():
         create_gmail_filter(gmail_service(), query, action)
         return redirect(url_for("rules"))
     except Exception as exc:
+        if is_permission_error(exc):
+            return render_page(
+                """
+                <div class="box">
+                  <h2>Permissions outdated</h2>
+                  <p>Tera Gmail access refresh karna padega — ek click mein fix ho jaayega,
+                     dobara sab kuch set nahi karna padega.</p>
+                  <a class="btn ok" href="{{ url_for('login', force=1) }}">Fix Permissions</a>
+                  <a class="btn btn2" href="{{ url_for('rules') }}">Cancel</a>
+                </div>
+                """,
+                msg="Permission issue",
+            )
         return render_page(
             """
             <div class="box">
@@ -1228,6 +1250,19 @@ def preview():
         )
 
     except Exception as exc:
+        if is_permission_error(exc):
+            return render_page(
+                """
+                <div class="box">
+                  <h2>Permissions outdated</h2>
+                  <p>Tera Gmail access refresh karna padega — ek click mein fix ho jaayega,
+                     dobara sab kuch set nahi karna padega.</p>
+                  <a class="btn ok" href="{{ url_for('login', force=1) }}">Fix Permissions</a>
+                  <a class="btn btn2" href="{{ url_for('dashboard') }}">Cancel</a>
+                </div>
+                """,
+                msg="Permission issue",
+            )
         return render_page(
             """
             <div class="box">
