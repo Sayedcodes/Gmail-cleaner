@@ -18,7 +18,10 @@ from googleapiclient.http import BatchHttpRequest
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 
-SCOPES = ["https://mail.google.com/"]
+SCOPES = [
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
+]
 JOBS = {}
 JOBS_LOCK = threading.Lock()
 
