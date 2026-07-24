@@ -982,6 +982,33 @@ def callback():
                 msg=email + " ALLOWED_EMAILS me nahi hai.",
             )
 
+        # Google only returns a refresh_token on the very first consent (or when
+        # prompt=consent is forced). If it's missing here, the app can't do any
+        # background/offline work later (rules, batch clean). Auto-repair once
+        # by silently sending the user through a force-consent round trip,
+        # instead of storing broken credentials and failing later with a
+        # confusing error.
+        if not credentials.refresh_token:
+            if session.get("_reauth_attempted"):
+                session.pop("_reauth_attempted", None)
+                return render_page(
+                    """
+                    <div class="box">
+                      <h2>Could not get offline access</h2>
+                      <p>Google baar baar refresh_token nahi de raha. Apne Google
+                         Account permissions se pehle is app ka access revoke karo,
+                         phir dobara login karo.</p>
+                      <a class="btn" href="https://myaccount.google.com/permissions" target="_blank">Open Google Permissions</a>
+                      <br><br>
+                      <a class="btn btn2" href="{{ url_for('home') }}">Back</a>
+                    </div>
+                    """,
+                    msg="Error",
+                )
+            session["_reauth_attempted"] = True
+            return redirect(url_for("login", force=1))
+
+        session.pop("_reauth_attempted", None)
         session["credentials"] = credentials_to_dict(credentials)
         session["email"] = email
         return redirect(url_for("dashboard"))
