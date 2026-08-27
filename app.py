@@ -84,6 +84,13 @@ ACTIONS = {
     },
 }
 
+
+def permanent_rule_actions():
+    actions = {key: dict(value) for key, value in ACTIONS.items()}
+    actions["spam"]["label"] = "Auto-delete future mail"
+    return actions
+
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "change-this-secret-key")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -694,18 +701,13 @@ def list_gmail_filters(service):
 def create_gmail_filter(service, query, action):
     """Create a real, permanent Gmail filter using the native Filters API.
 
-    action='spam' -> auto mark-as-spam for all future mail matching query
-    action='trash' -> auto delete for all future mail matching query
+    Gmail filters can prevent mail from reaching the inbox, but they cannot add
+    the SPAM system label. For spam-like permanent rules, auto-delete instead.
     """
-    if action == "spam":
-        add_labels = ["SPAM"]
-    else:
-        add_labels = ["TRASH"]
-
     body = {
         "criteria": {"query": query},
         "action": {
-            "addLabelIds": add_labels,
+            "addLabelIds": ["TRASH"],
             "removeLabelIds": ["INBOX", "UNREAD", "IMPORTANT"],
         },
     }
@@ -1123,8 +1125,9 @@ def rules():
         """
         <div class="box">
           <h2>Create a permanent rule</h2>
-          <p>Ye asli Gmail Filter banata hai — future ke sab matching mails automatically
-             {{ ' Trash' }} / Spam ho jayenge, bina kabhi app khole. Same jo browser se "Create filter" karta hai.</p>
+          <p>Ye asli Gmail Filter banata hai — future ke matching mails automatically
+             Trash mein chale jayenge, bina kabhi app khole. Gmail permanent filters "mark as spam"
+             support nahi karte, isliye spam-like rules auto-delete use karte hain.</p>
 
           <form method="post" action="{{ url_for('rules_create') }}">
             <h2 style="margin-top:18px;">1) Categories</h2>
@@ -1163,8 +1166,8 @@ def rules():
                 <div>
                   <code style="display:inline; padding:4px 8px;">{{ f.criteria.query or f.criteria.from or '—' }}</code>
                   <span class="badge">
-                    {% if 'SPAM' in f.action.addLabelIds %}Spam
-                    {% elif 'TRASH' in f.action.addLabelIds %}Trash
+                    {% if 'TRASH' in f.action.addLabelIds %}Trash
+                    {% elif 'SPAM' in f.action.addLabelIds %}Spam
                     {% else %}{{ f.action.addLabelIds | join(', ') }}{% endif %}
                   </span>
                 </div>
@@ -1182,7 +1185,7 @@ def rules():
         </div>
         """,
         categories=CATEGORIES,
-        actions=ACTIONS,
+        actions=permanent_rule_actions(),
         existing=existing,
         msg="Auto Rules",
     )
